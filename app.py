@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 import pyield as py
 from bs4 import BeautifulSoup
 import pdfplumber
-import re  # Para regex no parser PDF
+import re
 
-# BLACK-76 functions (unchanged)
+# BLACK-76 functions
 def black76_call(F: float, K: float, T: float, r: float, sigma: float) -> float:
     if T <= 0 or sigma <= 0:
         return max(F - K, 0) * np.exp(-r * T)
@@ -53,7 +53,6 @@ def get_dol_futures():
         st.write("DEBUG pyield - Colunas:", list(df.columns))
         st.write("DEBUG pyield - Primeiras linhas:", df.head(3))
         
-        # Colunas do log: ExpirationDate, TickerSymbol, LastRate (settlement)
         df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
         df = df.sort_values("Expiration")
         active_df = df[df["Expiration"] > pd.Timestamp.now()]
@@ -92,42 +91,48 @@ def get_selic_rate(days_ahead: int = 0) -> float:
         df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
         df = df.sort_values("data")
         df["valor"] = df["valor"].astype(float)
-        return df.iloc[-1]["valor"] / 100.0
+        rate = df.iloc[-1]["valor"] / 100.0
+        st.write(f"DEBUG Selic raw: {df.iloc[-1]['valor']}% → {rate*100:.3f}%")
+        return rate
     except Exception as e:
         st.error(f"Erro Selic: {str(e)}. Fallback 10.5%")
-        return 0.105
+        return 0.105  # 10.5% - valor mais realista para Selic 2026
 
 @st.cache_data(ttl=3600)
 def parse_b3_options_pdf(file_path: str):
     try:
         with pdfplumber.open(file_path) as pdf:
             text = ""
-            for page in pdf.pages:
+            max_pages = min(300, len(pdf.pages))  # Limita para evitar loop infinito/timeout
+            for i, page in enumerate(pdf.pages):
+                if i >= max_pages:
+                    break
                 text += page.extract_text() + "\n"
-            st.text_area("Texto bruto (busque DOL/WDO)", text[:3000])
             
-            # Regex para extrair linhas de DOL/WDO (ex: DOLH26C5000 BRBMEFCEBCT0 Cambial - - - - - - 0,1200 - 5,0000 - 1,0000 - 10 50 6.000,00)
-            pattern = r'(DOL|WDO)\w{3}\d{2}[CP]\d{4,5}\s+BRBMEF\w+\s+Cambial\s+.*'
-            lines = re.findall(pattern, text, re.MULTILINE)
-            if not lines:
-                st.warning("Nenhuma linha DOL/WDO encontrada. Procure 'Cambial' no texto bruto.")
+            st.text_area("Texto bruto (busque DOL/WDO ou 'Cambial')", text[:4000])
+            
+            # Regex para linhas de opções DOL/WDO (ex: DOLH26C5000 BRBMEFCEBCT0 Cambial ... 0,1200 ... 5,0000 ...)
+            pattern = r'(DOL|WDO)\w{3}\d{2}[CP]\d{4,5}.*?(\d{1,2},\d{4})?.*?(\d{1,2},\d{4})?.*?(\d{1,2},\d{4})?'
+            matches = re.findall(pattern, text, re.MULTILINE | re.IGNORECASE)
+            if not matches:
+                st.warning("Nenhuma linha DOL/WDO encontrada. Procure 'Cambial' ou 'Dólar' no texto bruto.")
                 return pd.DataFrame()
             
-            # Parse linhas (ajuste baseado nas imagens/table headers)
             data = []
-            for line in lines:
-                parts = re.split(r'\s+', line.strip())
-                if len(parts) > 5:
-                    symbol = parts[0]
-                    tipo = 'Call' if 'C' in symbol else 'Put'
-                    strike = float(symbol[-5:]) / 1000  # ex: 5000 → 5.0
-                    market_price = float(parts[7].replace(',', '.').replace('-', '0')) if len(parts) > 7 else 0.0
-                    data.append({'symbol': symbol, 'type': tipo, 'strike': strike, 'market_price': market_price})
+            for match in matches:
+                symbol, price1, price2, price3 = match
+                tipo = 'Call' if 'C' in symbol.upper() else 'Put'
+                strike_str = symbol[-5:] if len(symbol) >= 5 else '0'
+                strike = float(strike_str) / 1000  # ex: 5000 → 5.000
+                # Pega o primeiro preço válido (preço de fechamento)
+                price_str = price1 or price2 or price3 or '0'
+                market_price = float(price_str.replace(',', '.')) if price_str != '0' else 0.0
+                data.append({'symbol': symbol, 'type': tipo, 'strike': strike, 'market_price': market_price})
             
-            dol_chain = pd.DataFrame(data)
-            return dol_chain
+            chain = pd.DataFrame(data)
+            return chain
     except Exception as e:
-        st.error(f"Erro PDF: {str(e)}")
+        st.error(f"Erro PDF: {str(e)}. Limite de páginas aplicado.")
         return pd.DataFrame()
 
 # UI
@@ -153,16 +158,16 @@ with col1:
     futures_df = get_dol_futures()
     
     if not futures_df.empty:
-        # Colunas do log
         display_df = futures_df[["TickerSymbol", "LastRate", "Expiration"]].head(8).copy()
         display_df.columns = ["TickerSymbol", "SettlementRate", "Expiration"]
         st.dataframe(display_df, hide_index=True)
         
         active = futures_df[futures_df["Expiration"] > pd.Timestamp.now()].iloc[0]
-        F = active["LastRate"]
+        F_raw = active["LastRate"]
+        F = F_raw / 10.0  # Correção: divide por 10 (ex: 52.43 → 5.243)
         exp_date = active["Expiration"]
         T = (exp_date - datetime.now()).days / 365.25
-        st.success(f"**Underlying F** = {F:,.4f} | T = {T*365:.1f} days")
+        st.success(f"**Underlying F** = {F:,.4f} (corrigido de {F_raw:.2f}) | T = {T*365:.1f} days")
     else:
         F = get_dol_from_advfn() or st.number_input("Manual F (BRL/USD)", value=5.70, step=0.0001)
         T = st.number_input("T (years)", value=0.25, step=0.01)
@@ -209,4 +214,4 @@ if st.button("Calculate IV & Fair Price", type="primary"):
 
 st.caption("**Data**: pyield (B3), BCB Selic, Boletim PDF / ADVFN fallback")
 st.markdown("---")
-st.markdown("**Next**: Refine PDF parser for 'Cambial' section, add ADVFN options scrape")
+st.markdown("**Next**: Refine PDF regex for 'Cambial' section, add expiration parse, surface plot")
