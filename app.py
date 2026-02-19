@@ -10,8 +10,8 @@ import requests
 import zipfile
 import io
 import tabula
-import pypdf2
-import pypdf
+from pypdf import PdfReader
+import pdfplumber
 
 # ====================== BLACK-76 (Options on Futures) ======================
 
@@ -170,49 +170,27 @@ def fetch_b3_dol_settlement_fallback(date_str):  # date_str = '2026-02-19'
 
 @st.cache_data(ttl=3600)
 def parse_b3_options_pdf(file_path: str):
-    """Parser para BDI_03-4.pdf → extrai chain DOL/WDO."""
-    try:
-        # Extrai tables do PDF (tabula lê todas pages, retorna list de dfs)
-        dfs = tabula.read_pdf(file_path, pages="all", multiple_tables=True, lattice=False, stream=True)
+    with pdfplumber.open(file_path) as pdf:
+        text = ""
+        tables = []
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+            page_tables = page.extract_tables()  # auto-detect
+            tables.extend(page_tables or [])
         
-        # Filtra dfs para section cambial com DOL/WDO
-        dol_dfs = []
-        for df in dfs:
-            if df.empty:
-                continue
-            # Normaliza colunas (B3 tables têm headers como 'Instrumento financeiro', 'Código ISIN', 'Preço de fechamento', etc.)
-            df.columns = df.columns.str.strip().str.lower()
-            if 'instrumento financeiro' in df.columns or 'código isin' in df.columns:
-                # Filtra linhas com 'DOL' or 'WDO' in instrumento or código
-                dol_df = df[df.apply(lambda row: row.str.contains('DOL|WDO|Dólar|Dolar', case=False, na=False).any(), axis=1)]
-                if not dol_df.empty:
-                    dol_dfs.append(dol_df)
+        # Debug: mostre texto para achar "Cambial" ou "DOL"
+        st.text_area("Texto bruto (busque DOL/WDO)", text[:3000])
         
-        if not dol_dfs:
-            st.warning("Nenhuma chain DOL/WDO encontrada no PDF. Verifique section 'Cambial' ou baixe novo boletim.")
-            return pd.DataFrame()
-        
-        # Concat e limpa
-        chain = pd.concat(dol_dfs, ignore_index=True)
-        # Colunas chave: instrumento (ex: DOLH26C5000), tipo (call/put), strike, time to exp (from código), market price (preço de fechamento), volume
-        # Parse strike from código (ex: C5000 → strike 5.000)
-        chain['strike'] = chain['instrumento financeiro'].str.extract(r'(\d{4,5})', expand=False).astype(float) / 1000  # ex: 5000 → 5.000
-        chain['type'] = chain['instrumento financeiro'].str.contains('C', case=False).map({True: 'Call', False: 'Put'})
-        # Expiração from código (ex: H26 → março 26)
-        month_map = {'F':1, 'G':2, 'H':3, 'J':4, 'K':5, 'M':6, 'N':7, 'Q':8, 'U':9, 'V':10, 'X':11, 'Z':12}
-        chain['month'] = chain['instrumento financeiro'].str[3].map(month_map)
-        chain['year'] = 2000 + int(chain['instrumento financeiro'].str[4:6])
-        chain['expiration'] = pd.to_datetime(chain[['year', 'month']].assign(day=1))
-        # Market price (preço de fechamento)
-        chain['market_price'] = chain['preço de fechamento'].str.replace(',', '.').astype(float, errors='ignore')
-        
-        # Filtra ATM (strike closest to F)
-        return chain.sort_values('strike')
-    
-    except Exception as e:
-        st.error(f"Erro parsing PDF: {str(e)}")
+        # Se tables detectadas, converta para DF
+        if tables:
+            chain = pd.concat([pd.DataFrame(t) for t in tables if t], ignore_index=True)
+            # Limpeza manual (ajuste colunas)
+            chain.columns = chain.iloc[0]  # assume header na primeira linha
+            chain = chain[1:]
+            # Filtre DOL
+            dol_chain = chain[chain.apply(lambda row: row.astype(str).str.contains('DOL|WDO|Dolar', case=False).any(), axis=1)]
+            return dol_chain
         return pd.DataFrame()
-
 
 # ====================== STREAMLIT UI ======================
 st.set_page_config(page_title="DOL IV Analyzer", layout="wide")
@@ -312,6 +290,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
