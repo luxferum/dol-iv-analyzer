@@ -9,7 +9,7 @@ import pyield as py
 from bs4 import BeautifulSoup
 import pdfplumber
 
-# ====================== BLACK-76 (Options on Futures) ======================
+# BLACK-76 functions (unchanged)
 def black76_call(F: float, K: float, T: float, r: float, sigma: float) -> float:
     if T <= 0 or sigma <= 0:
         return max(F - K, 0) * np.exp(-r * T)
@@ -36,7 +36,7 @@ def black76_iv(market_price: float, F: float, K: float, T: float, r: float,
     except:
         return np.nan
 
-# ====================== DATA SOURCES ======================
+# DATA SOURCES
 @st.cache_data(ttl=300)
 def get_dol_futures():
     today_str = datetime.now().strftime("%d-%m-%Y")
@@ -46,18 +46,14 @@ def get_dol_futures():
             st.warning("pyield DOL vazio → tentando WDO")
             pl_df = py.futures(today_str, "WDO")
         if pl_df is None or pl_df.is_empty():
-            raise ValueError("No DOL/WDO data")
+            raise ValueError("No DOL/WDO data today")
         
         df = pl_df.to_pandas()
         st.write("DEBUG pyield - Colunas:", list(df.columns))
         st.write("DEBUG pyield - Primeiras linhas:", df.head(3))
         
-        exp_col = next((c for c in df.columns if "expir" in c.lower() or "venc" in c.lower() or "maturity" in c.lower()), None)
-        if exp_col:
-            df["Expiration"] = pd.to_datetime(df[exp_col])
-        else:
-            raise KeyError("Coluna de expiration não encontrada")
-        
+        # Colunas confirmadas do seu log
+        df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
         df = df.sort_values("Expiration")
         active_df = df[df["Expiration"] > pd.Timestamp.now()]
         if active_df.empty:
@@ -124,7 +120,7 @@ def parse_b3_options_pdf(file_path: str):
         st.error(f"Erro PDF: {str(e)}")
         return pd.DataFrame()
 
-# ====================== UI ======================
+# UI
 st.set_page_config(page_title="DOL IV Analyzer", layout="wide")
 st.title("🟢 DOL IV & Fair Price Analyzer (B3 BRL/USD Futures Options)")
 st.markdown("**Public data only • Black-76 • ATM auto-select**")
@@ -138,8 +134,8 @@ if uploaded_pdf is not None:
         f.write(uploaded_pdf.getbuffer())
     options_chain = parse_b3_options_pdf("temp_b3.pdf")
     if not options_chain.empty:
-        display_cols = [col for col in ['instrumento financeiro', 'type', 'strike', 'expiration', 'market_price'] if col in options_chain.columns]
-        st.dataframe(options_chain[display_cols])
+        display_cols = [col for col in options_chain.columns if 'dol' in col.lower() or 'wdo' in col.lower() or 'strike' in col.lower() or 'preço' in col.lower()]
+        st.dataframe(options_chain[display_cols] if display_cols else options_chain)
 
 col1, col2 = st.columns([1, 1])
 
@@ -148,21 +144,14 @@ with col1:
     futures_df = get_dol_futures()
     
     if not futures_df.empty:
-        ticker_col = next((c for c in futures_df.columns if "ticker" in c.lower() or "symbol" in c.lower()), None)
-        settle_col = next((c for c in futures_df.columns if "settle" in c.lower() or "rate" in c.lower() or "price" in c.lower()), None)
-        exp_col = "Expiration" if "Expiration" in futures_df.columns else next((c for c in futures_df.columns if "expir" in c.lower()), None)
+        # Colunas confirmadas do log
+        display_df = futures_df[["TickerSymbol", "LastRate", "Expiration"]].head(8).copy()
+        display_df.columns = ["TickerSymbol", "SettlementRate", "Expiration"]
+        st.dataframe(display_df, hide_index=True)
         
-        if all([ticker_col, settle_col, exp_col]):
-            display_df = futures_df[[ticker_col, settle_col, exp_col]].head(8).copy()
-            display_df.columns = ["TickerSymbol", "SettlementRate", "Expiration"]
-            st.dataframe(display_df, hide_index=True)
-        else:
-            st.error("Colunas essenciais não encontradas. Mostrando completo:")
-            st.dataframe(futures_df.head(8))
-        
-        active = futures_df[futures_df[exp_col] > pd.Timestamp.now()].iloc[0]
-        F = active[settle_col]
-        exp_date = active[exp_col]
+        active = futures_df[futures_df["Expiration"] > pd.Timestamp.now()].iloc[0]
+        F = active["LastRate"]  # ou "AvgRate" se preferir média
+        exp_date = active["Expiration"]
         T = (exp_date - datetime.now()).days / 365.25
         st.success(f"**Underlying F** = {F:,.4f} | T = {T*365:.1f} days")
     else:
@@ -211,6 +200,6 @@ if st.button("Calculate IV & Fair Price", type="primary"):
         st.markdown("**Greeks**")
         st.write(f"Δ = {delta:.4f} | Γ = {gamma:.6f} | ν (1%) = {vega/100:.4f}")
 
-st.caption("**Data Sourcing**: pyield (B3 settlements), BCB Selic API, Boletim Diário PDF or ADVFN fallback")
+st.caption("**Data**: pyield (B3), BCB Selic, Boletim PDF / ADVFN fallback")
 st.markdown("---")
-st.markdown("**Next**: full chain parser refinement, React dashboard, Greeks surface, backtesting")
+st.markdown("**Next**: Refine PDF parser for 'Cambial' section, add ADVFN options scrape")
