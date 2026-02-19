@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pyield as py
 from bs4 import BeautifulSoup
 import pdfplumber
+import re  # Para regex no parser PDF
 
 # BLACK-76 functions (unchanged)
 def black76_call(F: float, K: float, T: float, r: float, sigma: float) -> float:
@@ -52,7 +53,7 @@ def get_dol_futures():
         st.write("DEBUG pyield - Colunas:", list(df.columns))
         st.write("DEBUG pyield - Primeiras linhas:", df.head(3))
         
-        # Colunas confirmadas do seu log
+        # Colunas do log: ExpirationDate, TickerSymbol, LastRate (settlement)
         df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
         df = df.sort_values("Expiration")
         active_df = df[df["Expiration"] > pd.Timestamp.now()]
@@ -89,6 +90,7 @@ def get_selic_rate(days_ahead: int = 0) -> float:
             raise ValueError("Resposta vazia BCB")
         df = pd.DataFrame(data)
         df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
+        df = df.sort_values("data")
         df["valor"] = df["valor"].astype(float)
         return df.iloc[-1]["valor"] / 100.0
     except Exception as e:
@@ -104,18 +106,26 @@ def parse_b3_options_pdf(file_path: str):
                 text += page.extract_text() + "\n"
             st.text_area("Texto bruto (busque DOL/WDO)", text[:3000])
             
-            tables = []
-            for page in pdf.pages:
-                page_tables = page.extract_tables()
-                tables.extend(page_tables or [])
+            # Regex para extrair linhas de DOL/WDO (ex: DOLH26C5000 BRBMEFCEBCT0 Cambial - - - - - - 0,1200 - 5,0000 - 1,0000 - 10 50 6.000,00)
+            pattern = r'(DOL|WDO)\w{3}\d{2}[CP]\d{4,5}\s+BRBMEF\w+\s+Cambial\s+.*'
+            lines = re.findall(pattern, text, re.MULTILINE)
+            if not lines:
+                st.warning("Nenhuma linha DOL/WDO encontrada. Procure 'Cambial' no texto bruto.")
+                return pd.DataFrame()
             
-            if tables:
-                chain = pd.concat([pd.DataFrame(t) for t in tables if t], ignore_index=True)
-                chain.columns = chain.iloc[0].str.strip().str.lower()
-                chain = chain[1:].reset_index(drop=True)
-                dol_chain = chain[chain.apply(lambda row: row.astype(str).str.contains('DOL|WDO|Dólar|Dolar', case=False, na=False).any(), axis=1)]
-                return dol_chain
-            return pd.DataFrame()
+            # Parse linhas (ajuste baseado nas imagens/table headers)
+            data = []
+            for line in lines:
+                parts = re.split(r'\s+', line.strip())
+                if len(parts) > 5:
+                    symbol = parts[0]
+                    tipo = 'Call' if 'C' in symbol else 'Put'
+                    strike = float(symbol[-5:]) / 1000  # ex: 5000 → 5.0
+                    market_price = float(parts[7].replace(',', '.').replace('-', '0')) if len(parts) > 7 else 0.0
+                    data.append({'symbol': symbol, 'type': tipo, 'strike': strike, 'market_price': market_price})
+            
+            dol_chain = pd.DataFrame(data)
+            return dol_chain
     except Exception as e:
         st.error(f"Erro PDF: {str(e)}")
         return pd.DataFrame()
@@ -134,8 +144,7 @@ if uploaded_pdf is not None:
         f.write(uploaded_pdf.getbuffer())
     options_chain = parse_b3_options_pdf("temp_b3.pdf")
     if not options_chain.empty:
-        display_cols = [col for col in options_chain.columns if 'dol' in col.lower() or 'wdo' in col.lower() or 'strike' in col.lower() or 'preço' in col.lower()]
-        st.dataframe(options_chain[display_cols] if display_cols else options_chain)
+        st.dataframe(options_chain)
 
 col1, col2 = st.columns([1, 1])
 
@@ -144,13 +153,13 @@ with col1:
     futures_df = get_dol_futures()
     
     if not futures_df.empty:
-        # Colunas confirmadas do log
+        # Colunas do log
         display_df = futures_df[["TickerSymbol", "LastRate", "Expiration"]].head(8).copy()
         display_df.columns = ["TickerSymbol", "SettlementRate", "Expiration"]
         st.dataframe(display_df, hide_index=True)
         
         active = futures_df[futures_df["Expiration"] > pd.Timestamp.now()].iloc[0]
-        F = active["LastRate"]  # ou "AvgRate" se preferir média
+        F = active["LastRate"]
         exp_date = active["Expiration"]
         T = (exp_date - datetime.now()).days / 365.25
         st.success(f"**Underlying F** = {F:,.4f} | T = {T*365:.1f} days")
@@ -167,13 +176,11 @@ with col2:
     K_input = st.number_input("Strike (auto ATM if 0)", value=0.0, step=0.0001)
     market_price = st.number_input("Market Price (BRL per contract point)", value=0.0150, step=0.0001, format="%.4f")
 
-if not options_chain.empty and 'strike' in options_chain.columns and 'market_price' in options_chain.columns and 'expiration' in options_chain.columns:
+if not options_chain.empty and 'strike' in options_chain.columns and 'market_price' in options_chain.columns:
     closest_idx = (options_chain['strike'] - F).abs().argmin()
     closest_strike = options_chain.iloc[closest_idx]['strike']
     market_price = options_chain.iloc[closest_idx]['market_price']
-    exp_date = options_chain.iloc[closest_idx]['expiration']
-    T = (exp_date - datetime.now()).days / 365.25
-    st.success(f"ATM do PDF: Strike = {closest_strike:.4f}, Price = {market_price:.4f}, T = {T:.4f} anos")
+    st.success(f"ATM do PDF: Strike = {closest_strike:.4f}, Price = {market_price:.4f}")
     K = closest_strike
 elif K_input == 0:
     K = round(F / 0.0005) * 0.0005
