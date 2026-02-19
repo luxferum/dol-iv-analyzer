@@ -94,7 +94,23 @@ def get_dol_futures():
         st.error(f"Erro pyield: {str(e)}. Usando inputs manuais.")
         return pd.DataFrame()  # fallback para manual
 
-
+def get_dol_from_advfn():
+    url = "https://br.advfn.com/investimentos/futuros/dolar/hoje"
+    try:
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Exemplo selectors (inspecione a página para exatos):
+        # Preço atual DOL front: procure <td> com class ou text "Último"
+        # Atualize com inspect element: tipicamente em table com id ou class "quotes"
+        price_elem = soup.find("td", text=lambda t: "Último" in t if t else False)
+        if price_elem:
+            F = float(price_elem.find_next_sibling("td").text.replace(',', '.'))
+            return F
+        return None
+    except:
+        return None
+        
 @st.cache_data(ttl=3600)  # 1 hora de cache, Selic muda pouco
 def get_selic_rate(days_ahead: int = 0) -> float:
     """BCB Selic anualizada (série 11). Retorna em decimal (ex: 0.1175 para 11.75%)."""
@@ -230,6 +246,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
