@@ -6,6 +6,9 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import pyield as py  # pip install pyield (B3 public data)
+import requests
+import zipfile
+import io
 
 # ====================== BLACK-76 (Options on Futures) ======================
 
@@ -131,6 +134,21 @@ def get_selic_rate(days_ahead: int = 0) -> float:
         st.error(f"Erro ao buscar Selic: {str(e)}. Usando fallback 10.5%.")
         return 0.105  # Fallback conservador (ajuste conforme mercado atual)
 
+def fetch_b3_dol_settlement_fallback(date_str):  # date_str = '2026-02-19'
+    # URL padrão B3 para settlements diários (ajuste se mudar; cheque https://www.b3.com.br/pt_br/market-data-e-indices/servicos-de-dados/market-data/historico/derivativos/)
+    # Exemplo real: https://www.b3.com.br/data/files/... mas use busca ou known pattern
+    # Para simplicidade, use endpoint conhecido ou scrape a página de download
+    
+    # Placeholder: baixe manual o ZIP mais recente de "Ajustes Diários" em https://www.b3.com.br/pt_br/market-data-e-indices/servicos-de-dados/market-data/historico/derivativos/
+    # Ou implemente full parser:
+    url_example = "https://www.b3.com.br/data/files/XX/XX/XX/XX/ArquivosDerivativos/...zip"  # substitua pelo link real
+    
+    # Para testar: rode local e encontre o link atual via browser (inspecione na página de histórico)
+    # Alternativa rápida: use ADVFN ou InfoMoney scrape para F atual (mais fácil para MVP)
+    
+    st.info("Fallback: Implementar parser B3 ZIP settlement aqui (próximo passo)")
+    return None  # por enquanto
+
 
 # ====================== STREAMLIT UI ======================
 st.set_page_config(page_title="DOL IV Analyzer", layout="wide")
@@ -212,6 +230,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
