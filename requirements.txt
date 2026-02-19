@@ -4,4 +4,6 @@ scipy
 pandas
 requests
 pyield>=0.43.0
-beautifulsoup4 requests
+beautifulsoup4
+tabula-py
+pypdf2
