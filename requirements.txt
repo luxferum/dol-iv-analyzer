@@ -3,7 +3,6 @@ numpy
 scipy
 pandas
 requests
-pyield>=0.43.0
+pyield
 beautifulsoup4
-tabula-py
-pypdf
+pdfplumber
