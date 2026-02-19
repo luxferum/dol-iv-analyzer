@@ -159,7 +159,7 @@ def fetch_b3_dol_settlement_fallback(date_str):  # date_str = '2026-02-19'
     
     # Placeholder: baixe manual o ZIP mais recente de "Ajustes Diários" em https://www.b3.com.br/pt_br/market-data-e-indices/servicos-de-dados/market-data/historico/derivativos/
     # Ou implemente full parser:
-    url_example = "https://arquivos.b3.com.br/bdi/download/bdi/2026-02-18/BDI_03-4_20260218.pdf"  # substitua pelo link real
+    url_example = "https://arquivos.b3.com.br/bdi/download/bdi/2026-02-05/BDI_03-4_20260205.pdf"  # substitua pelo link real
     
     # Para testar: rode local e encontre o link atual via browser (inspecione na página de histórico)
     # Alternativa rápida: use ADVFN ou InfoMoney scrape para F atual (mais fácil para MVP)
@@ -311,6 +311,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
