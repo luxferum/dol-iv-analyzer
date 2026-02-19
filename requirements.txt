@@ -3,4 +3,4 @@ numpy
 scipy
 pandas
 requests
-pyield
+pyield>=0.43.0
