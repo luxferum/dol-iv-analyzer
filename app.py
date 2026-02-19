@@ -9,6 +9,8 @@ import pyield as py  # pip install pyield (B3 public data)
 import requests
 import zipfile
 import io
+import tabula  # novo
+import pypdf2  # novo
 
 # ====================== BLACK-76 (Options on Futures) ======================
 
@@ -165,6 +167,51 @@ def fetch_b3_dol_settlement_fallback(date_str):  # date_str = '2026-02-19'
     st.info("Fallback: Implementar parser B3 ZIP settlement aqui (próximo passo)")
     return None  # por enquanto
 
+@st.cache_data(ttl=3600)
+def parse_b3_options_pdf(file_path: str):
+    """Parser para BDI_03-4.pdf → extrai chain DOL/WDO."""
+    try:
+        # Extrai tables do PDF (tabula lê todas pages, retorna list de dfs)
+        dfs = tabula.read_pdf(file_path, pages="all", multiple_tables=True, lattice=False, stream=True)
+        
+        # Filtra dfs para section cambial com DOL/WDO
+        dol_dfs = []
+        for df in dfs:
+            if df.empty:
+                continue
+            # Normaliza colunas (B3 tables têm headers como 'Instrumento financeiro', 'Código ISIN', 'Preço de fechamento', etc.)
+            df.columns = df.columns.str.strip().str.lower()
+            if 'instrumento financeiro' in df.columns or 'código isin' in df.columns:
+                # Filtra linhas com 'DOL' or 'WDO' in instrumento or código
+                dol_df = df[df.apply(lambda row: row.str.contains('DOL|WDO|Dólar|Dolar', case=False, na=False).any(), axis=1)]
+                if not dol_df.empty:
+                    dol_dfs.append(dol_df)
+        
+        if not dol_dfs:
+            st.warning("Nenhuma chain DOL/WDO encontrada no PDF. Verifique section 'Cambial' ou baixe novo boletim.")
+            return pd.DataFrame()
+        
+        # Concat e limpa
+        chain = pd.concat(dol_dfs, ignore_index=True)
+        # Colunas chave: instrumento (ex: DOLH26C5000), tipo (call/put), strike, time to exp (from código), market price (preço de fechamento), volume
+        # Parse strike from código (ex: C5000 → strike 5.000)
+        chain['strike'] = chain['instrumento financeiro'].str.extract(r'(\d{4,5})', expand=False).astype(float) / 1000  # ex: 5000 → 5.000
+        chain['type'] = chain['instrumento financeiro'].str.contains('C', case=False).map({True: 'Call', False: 'Put'})
+        # Expiração from código (ex: H26 → março 26)
+        month_map = {'F':1, 'G':2, 'H':3, 'J':4, 'K':5, 'M':6, 'N':7, 'Q':8, 'U':9, 'V':10, 'X':11, 'Z':12}
+        chain['month'] = chain['instrumento financeiro'].str[3].map(month_map)
+        chain['year'] = 2000 + int(chain['instrumento financeiro'].str[4:6])
+        chain['expiration'] = pd.to_datetime(chain[['year', 'month']].assign(day=1))
+        # Market price (preço de fechamento)
+        chain['market_price'] = chain['preço de fechamento'].str.replace(',', '.').astype(float, errors='ignore')
+        
+        # Filtra ATM (strike closest to F)
+        return chain.sort_values('strike')
+    
+    except Exception as e:
+        st.error(f"Erro parsing PDF: {str(e)}")
+        return pd.DataFrame()
+
 
 # ====================== STREAMLIT UI ======================
 st.set_page_config(page_title="DOL IV Analyzer", layout="wide")
@@ -172,6 +219,24 @@ st.title("🟢 DOL IV & Fair Price Analyzer (B3 BRL/USD Futures Options)")
 st.markdown("**Public data only • Black-76 • ATM auto-select**")
 
 col1, col2 = st.columns([1, 1])
+
+st.subheader("Upload Boletim B3 (BDI_03-4.pdf) para Chain Live")
+uploaded_pdf = st.file_uploader("Carregue o PDF", type="pdf")
+
+if uploaded_pdf is not None:
+    with open("temp_b3.pdf", "wb") as f:
+        f.write(uploaded_pdf.getbuffer())
+    options_chain = parse_b3_options_pdf("temp_b3.pdf")
+    
+    if not options_chain.empty:
+        st.dataframe(options_chain[['instrumento financeiro', 'type', 'strike', 'expiration', 'market_price']])
+        # Auto-select ATM for IV calc
+        closest_strike = options_chain.iloc[(options_chain['strike'] - F).abs().argmin()]['strike']
+        market_price = options_chain.iloc[(options_chain['strike'] - F).abs().argmin()]['market_price']
+        exp_date = options_chain.iloc[(options_chain['strike'] - F).abs().argmin()]['expiration']
+        T = (exp_date - datetime.now()).days / 365.25
+        st.success(f"ATM detectado: Strike = {closest_strike:.4f}, Market Price = {market_price:.4f}, T = {T:.4f} anos")
+        # Use esses para IV e theo price
 
 with col1:
     st.subheader("1. Live Data (pyield + BCB)")
@@ -246,6 +311,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
