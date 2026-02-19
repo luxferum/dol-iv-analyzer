@@ -75,17 +75,44 @@ def get_dol_futures():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600)  # 1 hora de cache, Selic muda pouco
 def get_selic_rate(days_ahead: int = 0) -> float:
-    """BCB Selic (annualized, actual/252 business days)."""
-    # Direct BCB API (public, no key)
-    end = (datetime.now() + timedelta(days=days_ahead + 30)).strftime("%d/%m/%Y")
-    url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados?formato=json&dataInicial=01/01/2024&dataFinal={end}"
-    resp = requests.get(url).json()
-    df = pd.DataFrame(resp)
-    df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
-    latest = df.iloc[-1]["valor"] / 100.0  # % → decimal
-    return latest
+    """BCB Selic anualizada (série 11). Retorna em decimal (ex: 0.1175 para 11.75%)."""
+    from datetime import datetime, timedelta
+    import requests
+    import pandas as pd
+
+    # Calcula data final um pouco à frente para garantir dados
+    today = datetime.now().date()
+    end_date = (today + timedelta(days=days_ahead + 60)).strftime("%d/%m/%Y")
+    start_date = (today - timedelta(days=365)).strftime("%d/%m/%Y")  # últimos 12 meses
+
+    url = (
+        f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados"
+        f"?formato=json&dataInicial={start_date}&dataFinal={end_date}"
+    )
+
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()  # Erro se != 200
+        data = resp.json()
+
+        if not data:
+            raise ValueError("Resposta vazia da API BCB")
+
+        df = pd.DataFrame(data)
+        df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y")
+        df = df.sort_values("data", ascending=True)
+
+        # Converte 'valor' de string para float (ex: "11.75" → 11.75)
+        df["valor"] = df["valor"].astype(float)
+
+        latest_rate = df.iloc[-1]["valor"] / 100.0  # % → decimal (0.1175)
+        return latest_rate
+
+    except Exception as e:
+        st.error(f"Erro ao buscar Selic: {str(e)}. Usando fallback 10.5%.")
+        return 0.105  # Fallback conservador (ajuste conforme mercado atual)
 
 
 # ====================== STREAMLIT UI ======================
@@ -168,6 +195,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
