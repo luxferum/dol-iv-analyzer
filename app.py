@@ -46,14 +46,41 @@ def black76_iv(market_price: float, F: float, K: float, T: float, r: float,
 # ====================== DATA FETCH (Public/Free) ======================
 
 
-@st.cache_data(ttl=300)  # 5 min cache
+@st.cache_data(ttl=300)
 def get_dol_futures():
-    """pyield → latest DOL settlement + active contracts."""
-    today = datetime.now().date()
-    df = py.futures(today, "DOL")  # Returns Polars → convert
-    df = df.to_pandas()
-    df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
-    return df.sort_values("Expiration")
+    """Fetch latest DOL futures data via pyield (public B3 settlements)."""
+    from datetime import datetime
+    today = datetime.now().strftime("%d-%m-%Y")  # pyield espera DD-MM-YYYY
+
+    try:
+        import pyield as py
+        pl_df = py.futures(today, "DOL")          # ou "WDO" se for mini
+        if pl_df.is_empty():
+            st.warning("Nenhum dado DOL retornado para hoje – usando fallback.")
+            return pd.DataFrame()  # vazio → vai para inputs manuais
+
+        df = pl_df.to_pandas(use_pyarrow_extension_array=True)  # Polars → Pandas
+
+        # DEBUG: mostre as colunas reais no app (remova depois)
+        st.write("Colunas retornadas por pyield.futures('DOL'):", list(df.columns))
+
+        # Renomeie ou acesse corretamente (case-sensitive!)
+        # Provável: 'ExpirationDate' existe, mas confirme no debug acima
+        if 'ExpirationDate' in df.columns:
+            df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
+        elif 'Vencimento' in df.columns or 'Maturity' in df.columns:
+            # Caso raro de nome em PT
+            df["Expiration"] = pd.to_datetime(df.get("Vencimento", df.get("Maturity")))
+        else:
+            st.error("Coluna de vencimento não encontrada. Colunas disponíveis: " + ", ".join(df.columns))
+            return df  # retorne mesmo assim, mas sem filtro de expiração
+
+        df = df.sort_values("Expiration")  # ou pela coluna correta
+        return df
+
+    except Exception as e:
+        st.error(f"Erro ao buscar dados pyield: {str(e)}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
@@ -149,3 +176,4 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
