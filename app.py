@@ -56,9 +56,8 @@ def get_dol_futures():
         import pyield as py
         pl_df = py.futures(today, "DOL")          # ou "WDO" se for mini
         if pl_df.is_empty():
-            st.warning("Nenhum dado DOL retornado para hoje – usando fallback.")
-            return pd.DataFrame()  # vazio → vai para inputs manuais
-
+            pl_df = py.futures(today, "WDO")
+       
         df = pl_df.to_pandas(use_pyarrow_extension_array=True)  # Polars → Pandas
 
         # DEBUG: mostre as colunas reais no app (remova depois)
@@ -176,4 +175,5 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
