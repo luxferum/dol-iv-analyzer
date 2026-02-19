@@ -104,6 +104,33 @@ def get_dol_from_advfn():
         st.error(f"Erro ADVFN scrape: {str(e)}")
         return None
 
+def get_dol_options_from_advfn():
+    url = "https://br.advfn.com/investimentos/opcoes/dolar"
+    try:
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # A tabela principal geralmente tem class="opcoes" ou id específico
+        table = soup.find("table", {"class": "opcoes"})  # ajuste após inspecionar
+        if not table:
+            return pd.DataFrame()
+        
+        rows = table.find_all("tr")[1:]  # pula header
+        data = []
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) >= 5:
+                strike = float(cols[0].text.strip().replace(',', '.'))
+                tipo = cols[1].text.strip()  # Call/Put
+                venc = cols[2].text.strip()
+                preco = float(cols[3].text.strip().replace(',', '.'))
+                data.append({"strike": strike, "type": tipo, "vencimento": venc, "market_price": preco})
+        
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Erro scrape ADVFN opções: {str(e)}")
+        return pd.DataFrame()
+
 @st.cache_data(ttl=3600)  # 1 hora de cache, Selic muda pouco
 def get_selic_rate(days_ahead: int = 0) -> float:
     """BCB Selic anualizada (série 11). Retorna em decimal (ex: 0.1175 para 11.75%)."""
@@ -289,3 +316,4 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
