@@ -48,31 +48,48 @@ def black76_iv(market_price: float, F: float, K: float, T: float, r: float,
 
 @st.cache_data(ttl=300)
 def get_dol_futures():
-    today = datetime.now().strftime("%d-%m-%Y")
+    from datetime import datetime
+    today_str = datetime.now().strftime("%d-%m-%Y")
+    
     try:
         import pyield as py
-        pl_df = py.futures(today, "DOL")
+        pl_df = py.futures(today_str, "DOL")
+        
         if pl_df is None or pl_df.is_empty():
-            pl_df = py.futures(today, "WDO")  # fallback mini-dólar se DOL vazio
-        if pl_df.is_empty():
-            raise ValueError("No DOL/WDO data today")
-
+            st.warning("pyield DOL vazio → tentando WDO (mini dólar)")
+            pl_df = py.futures(today_str, "WDO")
+        
+        if pl_df is None or pl_df.is_empty():
+            raise ValueError("No DOL/WDO data today from pyield")
+        
         df = pl_df.to_pandas()
-        st.write("DEBUG - Colunas pyield:", list(df.columns))  # veja no app
-
-        exp_col = next((c for c in df.columns if "expiration" in c.lower() or "venc" in c.lower()), None)
-        if exp_col:
-            df["Expiration"] = pd.to_datetime(df[exp_col])
+        
+        # Debug: mostre colunas e primeiras linhas no app
+        st.write("DEBUG pyield - Colunas:", list(df.columns))
+        st.write("DEBUG pyield - Primeiras linhas:", df.head(3))
+        
+        # Coluna de expiração (confirmada na doc: 'ExpirationDate')
+        if 'ExpirationDate' in df.columns:
+            df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
         else:
-            st.error("Nenhuma coluna de vencimento encontrada. Colunas: " + ", ".join(df.columns))
-            return df
-
-        df = df.sort_values("Expiration", ascending=True)
-        return df[df["Expiration"] > pd.Timestamp.now()]  # só futuros ativos
-
+            # Fallback se nome mudar (raro)
+            exp_candidates = [c for c in df.columns if "expir" in c.lower() or "venc" in c.lower()]
+            if exp_candidates:
+                df["Expiration"] = pd.to_datetime(df[exp_candidates[0]])
+            else:
+                raise KeyError("Coluna de expiration não encontrada")
+        
+        df = df.sort_values("Expiration")
+        active_df = df[df["Expiration"] > pd.Timestamp.now()]
+        
+        if active_df.empty:
+            raise ValueError("No active futures found")
+        
+        return active_df
+    
     except Exception as e:
         st.error(f"Erro pyield: {str(e)}. Usando inputs manuais.")
-        return pd.DataFrame()
+        return pd.DataFrame()  # fallback para manual
 
 
 @st.cache_data(ttl=3600)  # 1 hora de cache, Selic muda pouco
@@ -195,6 +212,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
