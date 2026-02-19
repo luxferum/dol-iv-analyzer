@@ -48,37 +48,30 @@ def black76_iv(market_price: float, F: float, K: float, T: float, r: float,
 
 @st.cache_data(ttl=300)
 def get_dol_futures():
-    """Fetch latest DOL futures data via pyield (public B3 settlements)."""
-    from datetime import datetime
-    today = datetime.now().strftime("%d-%m-%Y")  # pyield espera DD-MM-YYYY
-
+    today = datetime.now().strftime("%d-%m-%Y")
     try:
         import pyield as py
-        pl_df = py.futures(today, "DOL")          # ou "WDO" se for mini
+        pl_df = py.futures(today, "DOL")
+        if pl_df is None or pl_df.is_empty():
+            pl_df = py.futures(today, "WDO")  # fallback mini-dólar se DOL vazio
         if pl_df.is_empty():
-            pl_df = py.futures(today, "WDO")
-       
-        df = pl_df.to_pandas(use_pyarrow_extension_array=True)  # Polars → Pandas
+            raise ValueError("No DOL/WDO data today")
 
-        # DEBUG: mostre as colunas reais no app (remova depois)
-        st.write("Colunas retornadas por pyield.futures('DOL'):", list(df.columns))
+        df = pl_df.to_pandas()
+        st.write("DEBUG - Colunas pyield:", list(df.columns))  # veja no app
 
-        # Renomeie ou acesse corretamente (case-sensitive!)
-        # Provável: 'ExpirationDate' existe, mas confirme no debug acima
-        if 'ExpirationDate' in df.columns:
-            df["Expiration"] = pd.to_datetime(df["ExpirationDate"])
-        elif 'Vencimento' in df.columns or 'Maturity' in df.columns:
-            # Caso raro de nome em PT
-            df["Expiration"] = pd.to_datetime(df.get("Vencimento", df.get("Maturity")))
+        exp_col = next((c for c in df.columns if "expiration" in c.lower() or "venc" in c.lower()), None)
+        if exp_col:
+            df["Expiration"] = pd.to_datetime(df[exp_col])
         else:
-            st.error("Coluna de vencimento não encontrada. Colunas disponíveis: " + ", ".join(df.columns))
-            return df  # retorne mesmo assim, mas sem filtro de expiração
+            st.error("Nenhuma coluna de vencimento encontrada. Colunas: " + ", ".join(df.columns))
+            return df
 
-        df = df.sort_values("Expiration")  # ou pela coluna correta
-        return df
+        df = df.sort_values("Expiration", ascending=True)
+        return df[df["Expiration"] > pd.Timestamp.now()]  # só futuros ativos
 
     except Exception as e:
-        st.error(f"Erro ao buscar dados pyield: {str(e)}")
+        st.error(f"Erro pyield: {str(e)}. Usando inputs manuais.")
         return pd.DataFrame()
 
 
@@ -175,5 +168,6 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
