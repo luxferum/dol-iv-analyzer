@@ -5,12 +5,12 @@ from scipy.optimize import brentq
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
-import pyield as py  # pip install pyield (B3 public data)
+import pyield as py
 import requests
 import zipfile
 import io
-import tabula  # novo
-import pypdf2  # novo
+import tabula
+import pypdf2
 
 # ====================== BLACK-76 (Options on Futures) ======================
 
@@ -311,6 +311,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
