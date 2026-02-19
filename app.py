@@ -11,6 +11,7 @@ import zipfile
 import io
 import tabula
 import pypdf2
+import pypdf
 
 # ====================== BLACK-76 (Options on Futures) ======================
 
@@ -311,6 +312,7 @@ st.caption("""
 
 st.markdown("---")
 st.markdown("**Next steps you requested**: full options-chain parser from B3 boletim, React/Vue dashboard, Greeks surface plot, backtesting module.")
+
 
 
 
